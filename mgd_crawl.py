@@ -111,12 +111,15 @@ def download_artice(article_href):
     #write_info(article_info)
 
     if sys.platform == 'darwin':
+        ## 맥 환경
+        time.sleep(1)
         pyautogui.hotkey('command', 's')
         time.sleep(1)
         pyperclip.copy(url_number)
+        time.sleep(1)
         pyautogui.hotkey("command", "v")
         time.sleep(1)
-        pyautogui.hotkey('enter')
+        pyautogui.hotkey('command', 's')
         time.sleep(10)
     else:
         pyautogui.hotkey('ctrl', 's')
