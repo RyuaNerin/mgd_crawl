@@ -11,7 +11,6 @@ import logging
 import os.path
 import re
 import warnings
-from email.header import Header
 from posixpath import relpath
 from time import sleep
 from typing import Final
