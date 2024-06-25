@@ -1,163 +1,440 @@
+"""
+만든이들
+- 필모렐 (Discord: @pilmorel_73175)
+- 류아네린 (RyuaNerin, ryuar.in)
+
+
+pip install requests beautifulsoup4 selenium webdriver-manager selenium_stealth
+"""
+
+import logging
+import os.path
+import re
+import warnings
+from posixpath import relpath
+from time import sleep
+from typing import Final
+from urllib.parse import urljoin, urlparse
+
+import requests
+from bs4 import BeautifulSoup, Tag
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
-from webdriver_manager.chrome import ChromeDriverManager
-from bs4 import BeautifulSoup
-import time
+from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.remote_connection import LOGGER
 from selenium_stealth import stealth
-import pyautogui, pyperclip
-import os.path
-import sys
+from webdriver_manager.chrome import ChromeDriverManager
 
-def write_info(article_info):
-    filename = url_id + "_info.txt"
+TGD_URL: Final = "https://tgd.kr"
+
+LOGGER.setLevel(logging.CRITICAL)
+
+
+def write_info(tgd_id: str, article_info: str):
+    filename = tgd_id + "_info.txt"
     if os.path.isfile(filename):
-        with open(filename, "a") as file:
-            file.write(article_info + "\n")
+        with open(filename, "a", encoding="utf-8") as fs:
+            fs.write(article_info + "\n")
     else:
-        with open(filename, "w") as file:
-            file.write("번호 | 일시 | 카테고리 | 제목 | 글쓴이\n")
-            file.write(article_info + "\n")
+        with open(filename, "w", encoding="utf-8") as fs:
+            fs.write("번호 | 일시 | 카테고리 | 제목 | 글쓴이\n")
+            fs.write(article_info + "\n")
 
-def check_duplicate(url_number):
+
+def filter_duplicated(tgd_id: str, article_list: list[tuple[int, bool]]) -> list[int]:
+    archived: set[int] = set()
+
     ## 중복이면 True, 중복이 아니면 False
-    filename = url_id + "_info.txt"
+    filename = tgd_id + "_info.txt"
     if os.path.isfile(filename):
-        with open(filename, 'r') as file:
-            if str(url_number) in file.read():
-                return True
-            else:
-                return False
-    else:
+        with open(filename, "r", encoding="utf-8") as fs:
+            for line in fs:
+                try:
+                    archived.add(int(line.split("|")[0].strip()))
+                except:  # noqa: E722
+                    pass
+
+    return [
+        x[0]
+        for x in sorted(
+            [x for x in article_list if x[0] not in archived],
+            key=lambda x: (not x[1], -x[0]),
+        )
+    ]
+
+
+def new_driver(headless=True) -> webdriver.Chrome:
+    options = webdriver.ChromeOptions()
+    options.add_experimental_option(
+        "excludeSwitches", ["enable-automation", "enable-logging"]
+    )
+    options.add_experimental_option("useAutomationExtension", False)
+    if headless:
+        options.add_argument("headless")
+    options.add_argument("window-size=1920x1080")
+    options.add_argument("--log-level=3")
+    # options.add_argument("--proxy-server=127.0.0.1:50000")
+
+    driver = webdriver.Chrome(
+        options=options,
+        service=ChromeService(ChromeDriverManager().install()),
+    )
+
+    stealth(
+        driver,
+        languages=["en-US", "en"],
+        vendor="Google Inc.",
+        platform="Win32",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True,
+    )
+    driver.delete_all_cookies()
+    driver.execute_cdp_cmd("Network.setCacheDisabled", {"cacheDisabled": True})
+
+    return driver
+
+
+def check_captcha(driver: webdriver.Chrome) -> bool:
+    try:
+        driver.find_element(By.ID, "main-menu")
+        return True
+    except:  # noqa: E722
         return False
 
-def get_href_list(page_number):
-    url = tgd_url + "/s/" + url_id + "/page/" + str(page_number)
-    driver = webdriver.Chrome(options=options, service=ChromeService(ChromeDriverManager().install()))
-    stealth(driver,
-            languages=["en-US", "en"],
-            vendor="Google Inc.",
-            platform="Win32",
-            webgl_vendor="Intel Inc.",
-            renderer="Intel Iris OpenGL Engine",
-            fix_hairline=True,
-            )
 
-    driver.get(url)
-    html = driver.page_source
-    driver.quit()
+def wait_captcha(driver: webdriver.Chrome) -> None:
+    first = True
 
-    soup = BeautifulSoup(html, 'html.parser')
+    while not check_captcha(driver):
+        if first:
+            first = False
+            print("captcha 감지! 확인해주세요!")
+        sleep(1)
 
-    article_href_list = []
 
-    for i in soup.find_all('div', class_='list-title'):
-        article_href_list.append(i.find('a')["href"])
+def get_article_no_list(tgd_id: str, page_number: int) -> tuple[list[int], bool]:
+    url = f"{TGD_URL}/s/{tgd_id}/page/{page_number}"
 
-    # print(article_href_list)
-    # print(soup.find('a', {"rel": "next"}))
+    article_list: list[tuple[int, bool]] = []  # id, notice
+
+    with new_driver() as driver:
+        print(url)
+        driver.get(url)
+        if not check_captcha(driver):
+            driver.close()
+            driver = new_driver(False)
+            wait_captcha(driver)
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        row: Tag
+        for row in soup.find_all("div", class_="article-list-row"):
+            id = int(row["id"].replace("article-list-row-", ""))  # type: ignore
+            article_list.append((id, "notice" in row["class"]))
+
+    # 중복 항목 제거
+    article_no_list = filter_duplicated(tgd_id, article_list)
 
     ## 다음 페이지 있으면 True, 다음 페이지 없으면 False
-    if soup.find('a', {"rel": "next"}) == None:
-        return {'article_href_list': article_href_list, 'is_next': False}
-    else:
-        return {'article_href_list': article_href_list, 'is_next': True}
+    next = soup.find("a", {"rel": "next"}) is not None
 
-    
+    return article_no_list, next
 
-def download_artice(article_href):
-    url_number = article_href.replace("/s/" + url_id + "/", "")
-    if check_duplicate(url_number):
-        return
-    
-    article_url = tgd_url + article_href
-    print(article_url)
-    driver = webdriver.Chrome(options=options, service=ChromeService(ChromeDriverManager().install()))
-    stealth(driver,
-            languages=["en-US", "en"],
-            vendor="Google Inc.",
-            platform="Win32",
-            webgl_vendor="Intel Inc.",
-            renderer="Intel Iris OpenGL Engine",
-            fix_hairline=True,
-            )
 
-    driver.get(article_url)
+def clean(driver: webdriver.Chrome) -> None:
+    # 광고제거
+    # adguard 및 List-KR 필터를 기반으로 한다.
+    for _ in range(3):
+        count = driver.execute_script(
+            """
+            (function() {
+                function remove_csspath(path) {
+                    try {
+                        var elements = $(path);
+                        for (var element of elements) element.parentNode.removeChild(element);
+                        
+                        return elements.length;
+                    } catch (e) {
+                        return 0;
+                    }
+                }
 
-    html = driver.page_source
-    soup = BeautifulSoup(html, 'html.parser')
+                //////////////////////////////////////////////////
 
-    article_info = url_number + " | "
+                var count = 0;
+
+                // List-KR
+                // tgd.kr#?#div[style*="padding:"]:has(div[style] div[style]:contains(AD))
+                count += remove_csspath('div[style*="padding:"]:has(div[style] div[style]:contains(AD))');
+
+                // List-KR
+                // tgd.kr,dpg.danawa.com##div[id*="-ad-"]
+                count += remove_csspath('div[id*="-ad-"]');
+
+                // List-KR
+                // tgd.kr#?#div[style^="display:"]:has(div[style*="width:"] > div[id^="div-gpt-ad-"])
+                count += remove_csspath('div[style^="display:"]:has(div[style*="width:"] > div[id^="div-gpt-ad-"])');
+
+                // List-KR
+                // tgd.kr###main-menu div[style][align]
+                count += remove_csspath('#main-menu div[style][align]');
+
+                // Adguard base filter
+                // ##[data-id^="div-gpt-ad"]
+                count += remove_csspath('[data-id^="div-gpt-ad"]');
+
+                return count;
+            })()
+            """
+        )
+        if count == 0:
+            break
+
+    def remove(xpath: str) -> None:
+        try:
+            elements = driver.find_elements(By.XPATH, xpath)
+            for element in elements:
+                driver.execute_script(
+                    "arguments[0].parentNode.removeChild(arguments[0]);",
+                    element,
+                )
+        except Exception as ex:  # noqa: E722
+            print(ex)
+            pass
+
+    # 위아래
+    remove("//body/header")
+    remove("//body/footer")
+
+    # 서비스 종료 알림
+    remove("//body/div[@class='container']")
+
+    # 약관
+    remove("//body/div[@id='term-modal']")
+
+    # 사이드 메뉴
+    remove("//body/div[@id='side-menu']")
+
+    # google tag manager
+    remove("//body/noscript")
+
+
+def download_artice(tgd_id: str, article_no: int):
+    article_url = f"{TGD_URL}/s/{tgd_id}/{article_no}"
+
+    with new_driver() as driver:
+        print(article_url)
+        driver.get(article_url)
+        if not check_captcha(driver):
+            driver.close()
+            driver = new_driver(False)
+            wait_captcha(driver)
+
+        # remove some elements
+        clean(driver)
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        article_time: str
+        article_category: str
+        article_title: str
+        article_writer: str
+
+        try:
+            article_time = soup.select_one("span#article-time > span").text  # type: ignore
+        except:  # noqa: E722
+            return
+
+        article_head = soup.select_one("div#article-info > h2").text.split("\n")  # type: ignore
+        if len(article_head) == 2:
+            article_category = ""
+            article_title = article_head[1].strip()
+        else:
+            article_category = article_head[1].strip()
+            article_title = article_head[2].strip()
+
+        article_writer = soup.select_one("div#article-info-writer > strong").text  # type: ignore
+
+        article_info = " | ".join(
+            [
+                str(article_no),
+                article_time,
+                article_category,
+                article_title,
+                article_writer,
+            ]
+        )
+        print(article_info)
+        write_info(tgd_id, article_info)
+
+        #
+
+        ####################################################################################################
+
+        # mhtml로 저장하는 부분...
+        # 광고 차단이나 이런게 안먹혀서 아래 방법 사용함.
+        # save_mhtml(driver, tgd_id, article_no)
+
+        save_html(soup, tgd_id, article_no, article_url)
+
+
+def save_mhtml(driver: webdriver.Chrome, tgd_id: str, article_no: int):
+    mhtml = driver.execute_cdp_cmd("Page.captureSnapshot", {})
+
+    os.makedirs(tgd_id, exist_ok=True)
+    with open(
+        os.path.join(tgd_id, f"{article_no}.mhtml"),
+        "w",
+        encoding="utf-8",
+        newline="",
+    ) as fs:
+        fs.write(mhtml["data"])
+
+
+def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, base_url: str):
+    out_dir = tgd_id
+    out_res_dir = os.path.join(tgd_id, "resources")
+
+    downloaded = 0
+
+    tag: Tag
+    for tag in soup.find_all(["img", "link", "script", "a"]):
+        match tag.name:
+            case "img":
+                if tag.has_attr("src"):
+                    resource_url = urljoin(base_url, str(tag.get("src")))
+                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    if filepath:
+                        tag["src"] = relpath(filepath, tgd_id)
+
+            case "script":
+                if tag.has_attr("src"):
+                    resource_url = urljoin(base_url, str(tag.get("src")))
+                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    if filepath:
+                        tag["src"] = relpath(filepath, tgd_id)
+
+            case "link":
+                if tag.has_attr("href") and tag.has_attr("rel") and "stylesheet" in tag.get("rel"):  # type: ignore
+                    resource_url = urljoin(base_url, str(tag.get("href")))
+                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    if filepath:
+                        tag["href"] = relpath(filepath, tgd_id)
+                        if downloaded:
+                            with open(filepath, "r", encoding="utf-8") as fs:
+                                css_content = fs.read()
+                            with open(filepath, "w", encoding="utf-8") as fs:
+                                fs.write(
+                                    process_css_content(
+                                        css_content,
+                                        resource_url,
+                                        out_res_dir,
+                                        css_path=filepath,
+                                    )
+                                )
+
+    filepath = os.path.join(tgd_id, f"{article_no}.html")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as fs:
+        fs.write(str(soup))
+
+    # Process inline styles
+    for tag in soup.find_all(style=True):
+        tag["style"] = process_css_content(str(tag.get("style")), base_url, out_dir)
+
+
+def download_resource(url: str, out_dir: str) -> tuple[str | None, bool]:
+    parsed_url = urlparse(url)
+    if parsed_url.scheme not in ["http", "https"] or not parsed_url.netloc:
+        return None, False
+
+    relative_path = parsed_url.path.lstrip("/")
+    if not relative_path:
+        relative_path = "index.html"
+
+    filepath: str = os.path.join(out_dir, parsed_url.hostname, relative_path).replace("\\", "/")  # type: ignore
+
+    if os.path.exists(filepath):
+        return filepath, False
 
     try:
-        article_time = soup.select_one("span#article-time > span").text
-    except:
-        return
-    article_info = article_info + article_time + " | "
+        response = requests.get(url)
+        if response.status_code == 200:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "wb") as fs:
+                fs.write(response.content)
 
-    article_head = soup.select_one("div#article-info > h2").text.split("\n")
-    if len(article_head) == 2:
-        title = article_head[1].strip()
-        article_info = article_info + title + " | "
-    else:
-        category = article_head[1].strip()
-        article_info = article_info + category + " | "
-        title = article_head[2].strip()
-        article_info = article_info + title + " | "
+            return filepath, True
+        else:
+            print(f"failed to download resource: {url} -> {response.status_code}")
+    except Exception as e:
+        print(f"Error downloading {url}: {e}")
 
-    writer = soup.select_one("div#article-info-writer > strong").text
-    article_info = article_info + writer
+    return None, False
 
-    print(article_info)
-    write_info(article_info)
 
-    if sys.platform == 'darwin':
-        ## 맥 환경
-        time.sleep(1)
-        pyautogui.hotkey('command', 's')
-        time.sleep(1)
-        pyperclip.copy(url_number)
-        time.sleep(1)
-        pyautogui.hotkey("command", "v")
-        time.sleep(1)
-        pyautogui.hotkey('command', 's')
-        time.sleep(10)
-    else:
-        pyautogui.hotkey('ctrl', 's')
-        time.sleep(1)
-        pyperclip.copy(url_number)
-        pyautogui.hotkey("ctrl", "v")
-        pyautogui.hotkey('enter')
-        time.sleep(10)
-    
+def process_css_content(
+    css_content: str, base_url: str, out_dir: str, css_path: str | None = None
+) -> str:
+    def url_replacer(match):
+        url = match.group(1)
+        full_url = urljoin(base_url, url.strip("'\""))
+        downloaded_path, _ = download_resource(full_url, out_dir)
+        if downloaded_path:
+            # relative path...
+            url_new = (
+                os.path.relpath(downloaded_path, os.path.dirname(css_path))
+                if css_path
+                else downloaded_path
+            ).replace("\\", "/")
+            return f"url('{url_new}')"
 
-print("안녕하세요, 미게더 크롤러입니다. 트게더 서비스 종료에 따른 게시물 백업을 도와드립니다.")
-url_id = input("트게더 게시판 주소를 입력해 주세요\n예시) https://tgd.kr/s/givemecs 에서 givemecs\n기본값은 미녕이데려오께 트게더입니다.\n>")
+        return match.group(0)
 
-if url_id == "":
-    url_id = "givemecs"
+    # Replace urls in the CSS content
+    css_content = re.sub(r"url\((.*?)\)", url_replacer, css_content)
+    return css_content
 
-tgd_url = "https://tgd.kr"
 
-options = webdriver.ChromeOptions()
-options.add_experimental_option("excludeSwitches", ["enable-automation"])
-options.add_experimental_option('useAutomationExtension', False)
+def process_script_content(script_content: str, base_url: str, out_dir: str):
+    # 저장할 때 발생하는 일부 오류 수정...
+    # todo
+    return script_content
 
-## 페이지 테스트용
-# page_number = 332
 
-page_number = 0
-while True:
-    page_number = page_number + 1
-    print(str(page_number) + "페이지 게시물 URL 모으는 중...")
-    href_list = get_href_list(page_number)
+if __name__ == "__main__":
+    warnings.filterwarnings("ignore")
 
-    print(str(page_number) + "페이지 게시물 URL 모으기 완료!")
-    print(str(page_number) + "페이지 게시물 다운로드 중...")
-    for article_href in href_list['article_href_list']:
-        download_artice(article_href)
+    print(
+        "안녕하세요, 미게더 크롤러입니다. 트게더 서비스 종료에 따른 게시물 백업을 도와드립니다."
+    )
 
-    if href_list['is_next']:
-        print(str(page_number) + "페이지 게시물 다운로드 완료!")
-    else:
-        print("모든 게시물 다운로드 완료!")
-        break
+    tgd_id = input(
+        "트게더 게시판 주소를 입력해 주세요\n예시) https://tgd.kr/s/givemecs 에서 givemecs\n기본값은 미녕이데려오께 트게더입니다.\n>"
+    )
+    if tgd_id == "":
+        tgd_id = "givemecs"
+
+    ## 페이지 테스트용
+    # page_number = 332
+
+    page_number = 0
+    next = True
+    while next:
+        page_number = page_number + 1
+        print(f"{page_number} 페이지 게시물 URL 모으는 중...")
+        article_no_list, next = get_article_no_list(tgd_id, page_number)
+
+        print(f"{page_number} 페이지 게시물 URL 모으기 완료!")
+        print(f"{page_number} 페이지 게시물 다운로드 중...")
+
+        for idx, article_no in enumerate(article_no_list):
+            print(f"게시물 다운로드 중... {idx + 1} / {len(article_no_list)}")
+            download_artice(tgd_id, article_no)
+
+        if next:
+            print(f"{page_number} 페이지 게시물 다운로드 완료!")
+        else:
+            print("모든 게시물 다운로드 완료!")
+            break
