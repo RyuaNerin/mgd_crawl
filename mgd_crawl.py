@@ -11,6 +11,7 @@ import logging
 import os.path
 import re
 import warnings
+from email.header import Header
 from posixpath import relpath
 from time import sleep
 from typing import Final
@@ -294,40 +295,56 @@ def save_mhtml(driver: webdriver.Chrome, tgd_id: str, article_no: int):
         fs.write(mhtml["data"])
 
 
-def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, base_url: str):
+def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, webpage_url: str):
     out_dir = tgd_id
     out_res_dir = os.path.join(tgd_id, "resources")
 
     downloaded = 0
 
     tag: Tag
-    for tag in soup.find_all(["img", "link", "script", "a"]):
+    for tag in soup.find_all(["img", "link", "script", "source"]):
         match tag.name:
             case "img":
                 if tag.has_attr("src"):
-                    resource_url = urljoin(base_url, str(tag.get("src")))
-                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    resource_url = urljoin(webpage_url, str(tag.get("src")))
+                    filepath, downloaded = download_resource(
+                        resource_url,
+                        out_res_dir,
+                        webpage_url,
+                    )
                     if filepath:
                         tag["src"] = relpath(filepath, tgd_id)
 
             case "source":
                 if tag.has_attr("src"):
-                    resource_url = urljoin(base_url, str(tag.get("src")))
-                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    resource_url = urljoin(webpage_url, str(tag.get("src")))
+                    filepath, downloaded = download_resource(
+                        resource_url,
+                        out_res_dir,
+                        webpage_url,
+                    )
                     if filepath:
                         tag["src"] = relpath(filepath, tgd_id)
 
             case "script":
                 if tag.has_attr("src"):
-                    resource_url = urljoin(base_url, str(tag.get("src")))
-                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    resource_url = urljoin(webpage_url, str(tag.get("src")))
+                    filepath, downloaded = download_resource(
+                        resource_url,
+                        out_res_dir,
+                        webpage_url,
+                    )
                     if filepath:
                         tag["src"] = relpath(filepath, tgd_id)
 
             case "link":
                 if tag.has_attr("href") and tag.has_attr("rel") and "stylesheet" in tag.get("rel"):  # type: ignore
-                    resource_url = urljoin(base_url, str(tag.get("href")))
-                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    resource_url = urljoin(webpage_url, str(tag.get("href")))
+                    filepath, downloaded = download_resource(
+                        resource_url,
+                        out_res_dir,
+                        webpage_url,
+                    )
                     if filepath:
                         tag["href"] = relpath(filepath, tgd_id)
                         if downloaded:
@@ -350,10 +367,12 @@ def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, base_url: str):
 
     # Process inline styles
     for tag in soup.find_all(style=True):
-        tag["style"] = process_css_content(str(tag.get("style")), base_url, out_dir)
+        tag["style"] = process_css_content(str(tag.get("style")), webpage_url, out_dir)
 
 
-def download_resource(url: str, out_dir: str) -> tuple[str | None, bool]:
+def download_resource(
+    url: str, out_dir: str, webpage_url: str
+) -> tuple[str | None, bool]:
     parsed_url = urlparse(url)
     if parsed_url.scheme not in ["http", "https"] or not parsed_url.netloc:
         return None, False
@@ -368,7 +387,7 @@ def download_resource(url: str, out_dir: str) -> tuple[str | None, bool]:
         return filepath, False
 
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers={"Referer": webpage_url})
         if response.status_code == 200:
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "wb") as fs:
@@ -384,12 +403,12 @@ def download_resource(url: str, out_dir: str) -> tuple[str | None, bool]:
 
 
 def process_css_content(
-    css_content: str, base_url: str, out_dir: str, css_path: str | None = None
+    css_content: str, webpage_url: str, out_dir: str, css_path: str | None = None
 ) -> str:
     def url_replacer(match):
         url = match.group(1)
-        full_url = urljoin(base_url, url.strip("'\""))
-        downloaded_path, _ = download_resource(full_url, out_dir)
+        full_url = urljoin(webpage_url, url.strip("'\""))
+        downloaded_path, _ = download_resource(full_url, out_dir, webpage_url)
         if downloaded_path:
             # relative path...
             url_new = (
@@ -414,6 +433,10 @@ def process_script_content(script_content: str, base_url: str, out_dir: str):
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
+
+    # mp4, jpg 다운로드 테스트용
+    # download_artice("givemecs", 69999562) # mp4
+    # download_artice("givemecs", 69999555) # jpg
 
     print(
         "안녕하세요, 미게더 크롤러입니다. 트게더 서비스 종료에 따른 게시물 백업을 도와드립니다."
