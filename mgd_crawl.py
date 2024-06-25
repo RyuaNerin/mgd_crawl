@@ -124,6 +124,7 @@ def get_article_no_list(tgd_id: str, page_number: int) -> tuple[list[int], bool]
         if not check_captcha(driver):
             driver.close()
             driver = new_driver(False)
+            driver.get(url)
             wait_captcha(driver)
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -229,6 +230,7 @@ def download_artice(tgd_id: str, article_no: int):
         if not check_captcha(driver):
             driver.close()
             driver = new_driver(False)
+            driver.get(article_url)
             wait_captcha(driver)
 
         # remove some elements
