@@ -108,7 +108,7 @@ def download_artice(article_href):
     article_info = article_info + writer
 
     print(article_info)
-    #write_info(article_info)
+    write_info(article_info)
 
     if sys.platform == 'darwin':
         ## 맥 환경
