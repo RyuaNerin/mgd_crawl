@@ -310,6 +310,13 @@ def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, base_url: str):
                     if filepath:
                         tag["src"] = relpath(filepath, tgd_id)
 
+            case "source":
+                if tag.has_attr("src"):
+                    resource_url = urljoin(base_url, str(tag.get("src")))
+                    filepath, downloaded = download_resource(resource_url, out_res_dir)
+                    if filepath:
+                        tag["src"] = relpath(filepath, tgd_id)
+
             case "script":
                 if tag.has_attr("src"):
                     resource_url = urljoin(base_url, str(tag.get("src")))
