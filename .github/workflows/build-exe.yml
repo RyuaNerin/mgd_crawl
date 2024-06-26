@@ -6,6 +6,7 @@ on:
     paths:
       - '*.py'
       - requirements.txt
+      - '.github/workflows/*'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
