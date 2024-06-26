@@ -27,7 +27,7 @@ jobs:
         pip install pyinstaller
     
     - name: Build with PyInstaller
-      run: pyinstaller --onefile --clean --noconfirm --name mgd mgd_crawl.py
+      run: pyinstaller --onefile --clean --noconfirm --collect-data=selenium_stealth --name mgd mgd_crawl.py
     
     - name: Create Release
       id: create_release
