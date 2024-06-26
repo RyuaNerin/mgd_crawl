@@ -625,7 +625,7 @@ def load_progress(tgd_id: str) -> tuple[int, bool, list[int]] | None:
     file = f"{tgd_id}.progress"
     if os.path.exists(file):
         with open(file, "r", encoding="utf-8") as fs:
-            lines = fs.readlines()
+            lines = [x.strip() for x in fs.readlines()]
             page = int(lines[0])
             next = lines[1] == "1"
             page_numbers = [int(x) for x in lines[2:]]
