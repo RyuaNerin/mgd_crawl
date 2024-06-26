@@ -3,3 +3,4 @@ requests==2.31.0
 selenium-stealth==1.0.6
 selenium==4.22.0
 webdriver-manager==4.0.1
+wakepy==0.9.1
