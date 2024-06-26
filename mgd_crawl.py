@@ -25,13 +25,26 @@ from selenium.webdriver.remote.remote_connection import LOGGER
 from selenium_stealth import stealth
 from webdriver_manager.chrome import ChromeDriverManager
 
-TGD_URL: Final = "https://tgd.kr"
-
 LOGGER.setLevel(logging.CRITICAL)
 
 
+TGD_URL: Final = "https://tgd.kr"
+
+# tag manager 같은 필요 없는 항목 다운로드 하지 않도록
+IGNORE_HOSTS: Final = [
+    "securepubads.g.doubleclick.net",
+    "www.google.com",
+    "www.googleoptimize.com",
+    "www.googletagmanager.com",
+    "www.google-analytics.com",
+    "www.googleadservices.com",
+    "www.gstatic.com",
+    "tpc.googlesyndication.com",
+]
+
+
 def write_info(tgd_id: str, article_info: str):
-    filename = tgd_id + "_info.txt"
+    filename = f"{tgd_id}_info.txt"
     if os.path.isfile(filename):
         with open(filename, "a", encoding="utf-8") as fs:
             fs.write(article_info + "\n")
@@ -41,11 +54,11 @@ def write_info(tgd_id: str, article_info: str):
             fs.write(article_info + "\n")
 
 
-def filter_duplicated(tgd_id: str, article_list: list[tuple[int, bool]]) -> list[int]:
+def filter_downloaded(tgd_id: str, article_list: list[tuple[int, bool]]) -> list[int]:
     archived: set[int] = set()
 
     ## 중복이면 True, 중복이 아니면 False
-    filename = tgd_id + "_info.txt"
+    filename = f"{tgd_id}_info.txt"
     if os.path.isfile(filename):
         with open(filename, "r", encoding="utf-8") as fs:
             for line in fs:
@@ -135,7 +148,7 @@ def get_article_no_list(tgd_id: str, page_number: int) -> tuple[list[int], bool]
             article_list.append((id, "notice" in row["class"]))
 
     # 중복 항목 제거
-    article_no_list = filter_duplicated(tgd_id, article_list)
+    article_no_list = filter_downloaded(tgd_id, article_list)
 
     ## 다음 페이지 있으면 True, 다음 페이지 없으면 False
     next = soup.find("a", {"rel": "next"}) is not None
@@ -270,15 +283,13 @@ def download_artice(tgd_id: str, article_no: int):
         print(article_info)
         write_info(tgd_id, article_info)
 
-        #
-
         ####################################################################################################
 
         # mhtml로 저장하는 부분...
         # 광고 차단이나 이런게 안먹혀서 아래 방법 사용함.
         # save_mhtml(driver, tgd_id, article_no)
 
-        save_html(soup, tgd_id, article_no, article_url)
+        save_html(soup, tgd_id, f"{article_no}.html", article_url)
 
 
 def save_mhtml(driver: webdriver.Chrome, tgd_id: str, article_no: int):
@@ -294,15 +305,31 @@ def save_mhtml(driver: webdriver.Chrome, tgd_id: str, article_no: int):
         fs.write(mhtml["data"])
 
 
-def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, webpage_url: str):
+def save_html(soup: BeautifulSoup, tgd_id: str, html_path: str, webpage_url: str):
     out_dir = tgd_id
     out_res_dir = os.path.join(tgd_id, "resources")
 
-    downloaded = 0
+    ignore_prefix = [
+        f"https://tgd.kr/s/{tgd_id}/",
+    ]
 
     tag: Tag
-    for tag in soup.find_all(["img", "link", "script", "source"]):
+    for tag in soup.find_all(["meta", "img", "link", "script", "source"]):
         match tag.name:
+            case "meta":
+                if tag.has_attr("content"):
+                    resource_url = urljoin(webpage_url, str(tag.get("content")))
+                    if any(resource_url.startswith(prefix) for prefix in ignore_prefix):
+                        continue
+
+                    filepath, downloaded = download_resource(
+                        resource_url,
+                        out_res_dir,
+                        webpage_url,
+                    )
+                    if filepath:
+                        tag["content"] = relpath(filepath, tgd_id)
+
             case "img":
                 if tag.has_attr("src"):
                     resource_url = urljoin(webpage_url, str(tag.get("src")))
@@ -313,6 +340,9 @@ def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, webpage_url: st
                     )
                     if filepath:
                         tag["src"] = relpath(filepath, tgd_id)
+
+                if tag.has_attr("onerror") and "this.src='https://upload.tgd.kr/icon/nologin.png'" in tag.get("onerror"):  # type: ignore
+                    tag["onerror"] = ""
 
             case "source":
                 if tag.has_attr("src"):
@@ -337,8 +367,11 @@ def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, webpage_url: st
                         tag["src"] = relpath(filepath, tgd_id)
 
             case "link":
-                if tag.has_attr("href") and tag.has_attr("rel") and "stylesheet" in tag.get("rel"):  # type: ignore
+                if tag.has_attr("href"):  # type: ignore
                     resource_url = urljoin(webpage_url, str(tag.get("href")))
+                    if any(resource_url.startswith(prefix) for prefix in ignore_prefix):
+                        continue
+
                     filepath, downloaded = download_resource(
                         resource_url,
                         out_res_dir,
@@ -346,7 +379,9 @@ def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, webpage_url: st
                     )
                     if filepath:
                         tag["href"] = relpath(filepath, tgd_id)
-                        if downloaded:
+
+                        # CSS
+                        if downloaded and (tag.has_attr("rel") and "stylesheet" in tag.get("rel")):  # type: ignore
                             with open(filepath, "r", encoding="utf-8") as fs:
                                 css_content = fs.read()
                             with open(filepath, "w", encoding="utf-8") as fs:
@@ -359,7 +394,19 @@ def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, webpage_url: st
                                     )
                                 )
 
-    filepath = os.path.join(tgd_id, f"{article_no}.html")
+    # 다른 게시글로 옮겨갈 수 있도록 처리
+    for tag in soup.find_all("a"):
+        if tag.has_attr("href"):
+            href = str(tag.get("href"))
+            href = urljoin(webpage_url, href)
+
+            href_url = urlparse(href)
+            if href_url.path.startswith(f"/s/{tgd_id}/"):
+                href_article_no = href_url.path[len(f"/s/{tgd_id}/") :]
+                tag["href"] = f"{href_article_no}.html"
+
+    # 저장
+    filepath = os.path.join(tgd_id, html_path)
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as fs:
         fs.write(str(soup))
@@ -372,15 +419,24 @@ def save_html(soup: BeautifulSoup, tgd_id: str, article_no: int, webpage_url: st
 def download_resource(
     url: str, out_dir: str, webpage_url: str
 ) -> tuple[str | None, bool]:
+    if url.startswith("//"):
+        url = f"https:{url}"
     parsed_url = urlparse(url)
     if parsed_url.scheme not in ["http", "https"] or not parsed_url.netloc:
         return None, False
 
-    relative_path = parsed_url.path.lstrip("/")
-    if not relative_path:
-        relative_path = "index.html"
+    # tag manager 같은 필요 없는 항목 다운로드 하지 않도록
+    if parsed_url.hostname in IGNORE_HOSTS:
+        ext = os.path.splitext(parsed_url.path)[1]
+        filepath = os.path.join(out_dir, f"ignored-content{ext}")
+        if not os.path.exists(filepath):
+            with open(filepath, "w") as fs:
+                fs.write("")
 
-    filepath: str = os.path.join(out_dir, parsed_url.hostname, relative_path).replace("\\", "/")  # type: ignore
+        return filepath, False
+
+    # tgd_id/resources/hostname/path
+    filepath: str = os.path.join(out_dir, parsed_url.hostname, parsed_url.path.lstrip("/") or "index.html").replace("\\", "/")  # type: ignore
 
     if os.path.exists(filepath):
         return filepath, False
