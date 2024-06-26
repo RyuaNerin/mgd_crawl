@@ -653,6 +653,8 @@ def check_update():
 새로운 버전 : {u['tag_name']}
 다운로드: {u['html_url']}"""
             )
+        else:
+            print(f"현재버전 : {VERSION}")
 
     except:  # noqa: E722
         pass
@@ -661,12 +663,12 @@ def check_update():
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
 
-    check_update()
-
     print(
         """안녕하세요, 미게더 크롤러입니다.
 트게더 서비스 종료에 따른 게시물 백업을 도와드립니다."""
     )
+
+    check_update()
 
     tgd_id = input(
         """트게더 게시판 주소를 입력해 주세요
