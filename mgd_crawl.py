@@ -665,7 +665,16 @@ if __name__ == "__main__":
 
     print(
         """안녕하세요, 미게더 크롤러입니다.
-트게더 서비스 종료에 따른 게시물 백업을 도와드립니다."""
+트게더 서비스 종료에 따른 게시물 백업을 도와드립니다.
+
+만든이들
+- 필모렐 (Discord: @pilmorel_73175)
+- 류아네린 (RyuaNerin, https://ryuar.in)
+
+본 프로그램의 소스코드는 아래 링크에서 확인하실 수 있습니다.
+https://github.com/RyuaNerin/mgd_crawl
+
+"""
     )
 
     check_update()
