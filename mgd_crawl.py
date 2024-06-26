@@ -13,7 +13,6 @@ import os.path
 import re
 import warnings
 from base64 import b64decode
-from datetime import datetime, timedelta
 from posixpath import relpath
 from time import sleep
 from typing import Callable, Final
@@ -721,6 +720,7 @@ https://github.com/RyuaNerin/mgd_crawl
     # page_number = 332
 
     with keep.running(), Crawler(tgd_id) as crawler:
+        next = True
         while next:
             if not saved_article_no_list or len(saved_article_no_list) == 0:
                 print(f"{page_number} 페이지 목록 다운로드 중...")
@@ -734,7 +734,7 @@ https://github.com/RyuaNerin/mgd_crawl
                         if retries == 3:
                             raise ex
                         else:
-                            print(f"이지 목록 다운로드 실패: {ex}")
+                            print(f"페이지 목록 다운로드 실패: {ex}")
                         pass
 
                 print(f"{page_number} 페이지 목록 다운로드 완료")
@@ -749,8 +749,6 @@ https://github.com/RyuaNerin/mgd_crawl
             article_no_list_len = len(article_no_list)
 
             for idx, article_no in enumerate(article_no_list):
-                next_time = datetime.now() + timedelta(seconds=wait_seconds)
-
                 print(f"게시물 다운로드 중... {idx + 1} / {len(article_no_list)} ")
                 retries = 0
                 while True:
@@ -769,7 +767,7 @@ https://github.com/RyuaNerin/mgd_crawl
                 save_progress(tgd_id, page_number, next, article_no_list[idx + 1 :])
 
                 if idx + 1 < article_no_list_len:
-                    sleep((datetime.now() - next_time).total_seconds())
+                    sleep(wait_seconds)
 
             print(f"{page_number} 페이지 게시물 다운로드 완료!")
 
