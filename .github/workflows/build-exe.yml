@@ -29,6 +29,9 @@ jobs:
     
     - name: Build with PyInstaller
       run: pyinstaller --onefile --clean --noconfirm --collect-data=selenium_stealth --name mgd mgd_crawl.py
+
+    - name: version
+      run: echo "VERSION = 'v${{ github.run_number }}'" > version.py
     
     - name: Create Release
       id: create_release

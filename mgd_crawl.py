@@ -21,6 +21,7 @@ from urllib.parse import parse_qsl, unquote_plus, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
+from flask import request
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
@@ -29,8 +30,13 @@ from selenium_stealth import stealth
 from wakepy import keep
 from webdriver_manager.chrome import ChromeDriverManager
 
+from version import VERSION
+
 LOGGER.setLevel(logging.CRITICAL)
 
+REPOSITORY_URL: Final = (
+    "https://api.github.com/repos/RyuaNerin/mgd_crawl/releases/latest"
+)
 
 TGD_HOST: Final = "tgd.kr"
 TGD_URL: Final = "https://tgd.kr"
@@ -637,8 +643,26 @@ def del_progress():
         os.remove(file)
 
 
+def check_update():
+    try:
+        u = requests.get(REPOSITORY_URL).json()
+
+        if u["tag_name"] != VERSION:
+            print(
+                f"""새로운 버전이 있습니다
+현재 버전 : {VERSION}
+새로운 버전 : {u['tag_name']}
+다운로드: {u['html_url']}"""
+            )
+
+    except:
+        pass
+
+
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
+    
+    check_update()
 
     print(
         """안녕하세요, 미게더 크롤러입니다.
