@@ -21,7 +21,6 @@ from urllib.parse import parse_qsl, unquote_plus, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
-from flask import request
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
@@ -655,13 +654,13 @@ def check_update():
 다운로드: {u['html_url']}"""
             )
 
-    except:
+    except:  # noqa: E722
         pass
 
 
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
-    
+
     check_update()
 
     print(
