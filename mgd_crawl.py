@@ -175,11 +175,15 @@ class Crawler:
                 if params:
                     response = params.get("response")
                     if response and target_url == Url(response["url"]):
-                        body = self.driver.execute_cdp_cmd(
-                            "Network.getResponseBody",
-                            {"requestId": params["requestId"]},
-                        )
-                        return body["body"]
+                        try:
+                            body = self.driver.execute_cdp_cmd(
+                                "Network.getResponseBody",
+                                {"requestId": params["requestId"]},
+                            )
+                            return body["body"]
+                        except Exception as ex:
+                            print(f"Error getting response body: {ex}")
+                            continue
 
         return None
 
