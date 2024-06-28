@@ -39,6 +39,8 @@ REPOSITORY_URL: Final = (
 TGD_HOST: Final = "tgd.kr"
 TGD_URL: Final = "https://tgd.kr"
 
+MIN_WAIT_SECONDS: Final = 3
+
 
 # tag manager 같은 필요 없는 항목 다운로드 하지 않도록
 IGNORE_HOSTS: Final = [
@@ -692,14 +694,14 @@ https://github.com/RyuaNerin/mgd_crawl
         tgd_id = "givemecs"
 
     wait_seconds = input(
-        """대기 시간을 초단위로 입력하세요.
-최소값 (기본값)은 5초입니다.
+        f"""대기 시간을 초단위로 입력하세요.
+최소값 (기본값)은 {MIN_WAIT_SECONDS}초입니다.
 >"""
     )
     try:
-        wait_seconds = max(int(wait_seconds), 5)
+        wait_seconds = max(int(wait_seconds), MIN_WAIT_SECONDS)
     except Exception:
-        wait_seconds = 5
+        wait_seconds = MIN_WAIT_SECONDS
 
     default = (1, True, None)
     (page_number, saved_next, saved_article_no_list) = default
