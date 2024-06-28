@@ -15,7 +15,7 @@ import warnings
 from base64 import b64decode
 from posixpath import relpath
 from time import sleep
-from typing import Callable, Final
+from typing import Callable, Final, Tuple
 from urllib.parse import parse_qsl, unquote_plus, urljoin, urlparse
 
 import requests
@@ -39,7 +39,7 @@ REPOSITORY_URL: Final = (
 TGD_HOST: Final = "tgd.kr"
 TGD_URL: Final = "https://tgd.kr"
 
-MIN_WAIT_SECONDS: Final = 3
+MIN_WAIT_SECONDS: Final = 1
 
 
 # tag manager 같은 필요 없는 항목 다운로드 하지 않도록
@@ -116,13 +116,14 @@ class Crawler:
                     except:  # noqa: E722
                         pass
 
-        return [
+        lst = [
             x[0]
             for x in sorted(
                 [x for x in article_list if x[0] not in archived],
                 key=lambda x: (not x[1], -x[0]),
             )
         ]
+        return lst
 
     def new_driver(self, headless=True):
         self.close_driver()
@@ -223,8 +224,12 @@ class Crawler:
                 self.new_driver(False)
                 self.driver.get(url)
 
-    def download_list(self, page_number: int) -> tuple[list[int], bool]:
+    def download_list(
+        self, page_number: int, category: int
+    ) -> tuple[list[int], bool, list[int]]:
         page_url = f"{TGD_URL}/s/{self.tgd_id}/page/{page_number}"
+        if category != 0:
+            page_url += f"?category={category}"
 
         article_list: list[tuple[int, bool]] = []  # id, notice
 
@@ -236,6 +241,7 @@ class Crawler:
 
         soup = BeautifulSoup(self.driver.page_source, "html.parser")
 
+        # 게시글 추출
         article_count = 0
         row: Tag
         for row in soup.find_all("div", class_="article-list-row"):
@@ -243,16 +249,29 @@ class Crawler:
             if row.find_all("i", class_="fa fa-lock"):
                 continue
 
-            id = int(row["id"].replace("article-list-row-", ""))  # type: ignore
+            id = int(str(row.get("id")).replace("article-list-row-", ""))
             article_list.append((id, "notice" in row["class"]))
             article_count += 1
 
-        # 게시글이 하나도 없으면 저장하지 않고 스킵한다.
+        # 카테고리 추출
+        categories: list[int] = [0]
+        for category_tag in soup.select("#article-category-left-list .shortcut-link"):
+            href = str(category_tag.get("href"))
+            m = re.match(r"^.+\?category=(\d+)$", href, re.IGNORECASE | re.MULTILINE)
+            if m:
+                categories.append(int(m.group(1)))
+
+        if category == 0:
+            self.save_html(soup, f"page_{page_number}.html", page_url, category)
+        else:
+            self.save_html(
+                soup, f"category_{category}_page_{page_number}.html", page_url, category
+            )
+
+        # 게시글이 하나도 없으면 스킵한다.
         if article_count == 0:
             self.close_driver()
-            return [], False
-
-        self.save_html(soup, f"page_{page_number}.html", page_url)
+            return [], False, categories
 
         # 중복 항목 제거
         article_no_list = self.filter_downloaded(article_list)
@@ -262,9 +281,9 @@ class Crawler:
 
         self.close_driver()
 
-        return article_no_list, next
+        return article_no_list, next, categories
 
-    def download_artice(self, article_no: int):
+    def download_artice(self, article_no: int, category: int):
         article_url = f"{TGD_URL}/s/{self.tgd_id}/{article_no}"
 
         self.new_driver()
@@ -308,7 +327,7 @@ class Crawler:
 
         ####################################################################################################
 
-        self.save_html(soup, f"{article_no}.html", article_url)
+        self.save_html(soup, f"{article_no}.html", article_url, category)
 
         self.write_info(article_info)
 
@@ -396,6 +415,7 @@ class Crawler:
         soup: BeautifulSoup,
         html_path: str,
         base_url: str,
+        category: int,
     ):
         base_dir = self.tgd_id
         html_dir = os.path.dirname(os.path.join(base_dir, html_path))
@@ -412,7 +432,26 @@ class Crawler:
             match tag.name:
                 case "meta":
                     if tag.has_attr("content"):
-                        resource_url = urljoin(base_url, str(tag.get("content")))
+                        if tag.has_attr("property") and (
+                            "title" in tag["property"]
+                            or "description" in tag["property"]
+                        ):
+                            continue
+                        if tag.has_attr("name") and (
+                            "title" in tag["name"] or "description" in tag["name"]
+                        ):
+                            continue
+
+                        content = str(tag.get("content"))
+                        if not re.match(r"^(https?:)?//", content):
+                            continue
+
+                        resource_url = urljoin(base_url, content)
+                        try:
+                            urlparse(resource_url)
+                        except:  # noqa: E722
+                            continue
+
                         if any(
                             resource_url.startswith(prefix)
                             for prefix in ignore_resource_prefix
@@ -507,13 +546,13 @@ class Crawler:
                     tag["href"] = f"{href_article_no}.html"
 
                 # 페이지
-                if href.hostname == TGD_HOST and href.path.startswith(
-                    f"/s/{self.tgd_id}/page/"
-                ):
-                    page_url = f"page_{os.path.basename(href.path)}"
-                    if not page_url.endswith(".html") and not page_url.endswith(".htm"):
-                        page_url += ".html"
-                    tag["href"] = page_url
+                if href.hostname == TGD_HOST:
+                    m = re.match(rf"^/s/{self.tgd_id}/page/(\d+)$", href.path)
+                    if m:
+                        if category == 0:
+                            tag["href"] = f"page_{m.group(1)}.html"
+                        else:
+                            tag["href"] = f"category_{category}_page_{m.group(1)}.html"
 
         # 타이틀 처리
         try:
@@ -574,7 +613,10 @@ class Crawler:
 
         # requests 써서 가져오기
         try:
-            response = requests.get(resource_url, headers={"Referer": webpage_url})
+            # print(f"resource from requests: {resource_url}")
+            response = requests.get(
+                resource_url, headers={"Referer": webpage_url}, timeout=5
+            )
             if response.status_code == 200:
                 # print(f"resource from requests: {resource_url}")
 
@@ -622,28 +664,39 @@ class Crawler:
         return script_content
 
 
-def save_progress(tgd_id: str, page: int, next: bool, remains: list[int] | None):
+def save_progress(
+    tgd_id: str, page: int, next: bool, remains: list[int] | None, categories: list[int]
+):
     file = f"{tgd_id}.progress"
     with open(file, "w", encoding="utf-8") as fs:
         fs.write(
             "\n".join(
-                [str(page), "1" if next else "0"] + [str(x) for x in remains]
+                [str(page), "1" if next else "0"]
+                + [str(x) for x in remains]
+                + ["c" + ",".join([str(x) for x in categories])]
                 if remains
                 else []
             )
         )
+        fs.flush()
 
 
-def load_progress(tgd_id: str) -> tuple[int, bool, list[int]] | None:
+def load_progress(tgd_id: str) -> tuple[int, bool, list[int], list[int]] | None:
     file = f"{tgd_id}.progress"
     if os.path.exists(file):
         with open(file, "r", encoding="utf-8") as fs:
             lines = [x.strip() for x in fs.readlines()]
             page = int(lines[0])
             next = lines[1] == "1"
-            page_numbers = [int(x) for x in lines[2:]]
+            if lines[-1].startswith("c"):
+                page_numbers = [int(x) for x in lines[2:-1]]
+                categories = [int(x) for x in lines[-1][1:].split(",")]
+            else:
+                page_numbers = [int(x) for x in lines[2:]]
+                categories = []
 
-            return page, next, page_numbers
+            fs.flush()
+            return page, next, page_numbers, categories
 
     return None
 
@@ -710,37 +763,54 @@ https://github.com/RyuaNerin/mgd_crawl
     except Exception:
         wait_seconds = MIN_WAIT_SECONDS
 
-    default = (1, True, None)
-    (page_number, saved_next, saved_article_no_list) = default
+    default: Tuple[int, bool, list[int], list[int]] = (1, True, [], [])
+    (page_number, next, article_no_list, category_no_list) = default
+
     progress = load_progress(tgd_id)
     if progress:
-        (page_number, saved_next, saved_article_no_list) = progress
+        (p_page_number, p_next, p_article_no, p_categories) = progress
 
         p = input(
             f"""트게더 게시판 주소 : {tgd_id}
-페이지 : {page_number}
-작업 : {'페이지 목록 가져오기' if not saved_article_no_list else f'게시글 가져오기 ({len(saved_article_no_list)} 개)'}
+페이지 : {p_page_number}
+카테고리 : {' '.join([str(x)for x in p_categories]) if p_categories else ''}
+작업 : {'페이지 목록 가져오기' if not p_article_no else f'게시글 가져오기 ({len(p_article_no)} 개)'}
 -------------------------
 이전 작업을 이어서 진행합니다.
 작업을 취소하려면 N을 입력해주세요.
 >""",
         )
         if p == "n" or p == "N":
-            (page_number, saved_next, saved_article_no_list) = default
             del_progress()
+        else:
+            (page_number, next, article_no_list, category_no_list) = progress
 
     ## 페이지 테스트용
     # page_number = 332
 
     with keep.running(), Crawler(tgd_id) as crawler:
-        next = True
-        while next:
-            if not saved_article_no_list or len(saved_article_no_list) == 0:
-                print(f"{page_number} 페이지 목록 다운로드 중...")
+        while True:
+            if len(article_no_list) == 0 or len(category_no_list) == 0:
+                print(
+                    f"카테고리 {category_no_list[0] if len(category_no_list) >0 else 0} : {page_number} 페이지 목록 다운로드 중..."
+                )
                 retries = 0
                 while True:
                     try:
-                        article_no_list, next = crawler.download_list(page_number)
+                        new_article_no_list, new_next, categories_new = (
+                            crawler.download_list(
+                                page_number,
+                                category_no_list[0] if category_no_list else 0,
+                            )
+                        )
+
+                        if len(article_no_list) == 0:
+                            article_no_list = new_article_no_list
+                            next = new_next
+
+                        if len(category_no_list) == 0:
+                            category_no_list = categories_new
+
                         break
                     except Exception as ex:
                         retries += 1
@@ -750,42 +820,75 @@ https://github.com/RyuaNerin/mgd_crawl
                             print(f"페이지 목록 다운로드 실패: {ex}")
                         pass
 
-                print(f"{page_number} 페이지 목록 다운로드 완료")
+                print(
+                    f"카테고리 {category_no_list[0] if len(category_no_list) > 0 else 0} : {page_number} 페이지 목록 다운로드 완료"
+                )
 
-                save_progress(tgd_id, page_number, next, article_no_list)
-            else:
-                article_no_list, next = saved_article_no_list, saved_next
-            saved_article_no_list = None
+                if len(article_no_list) == 0:
+                    page_number = page_number + 1
 
-            print(f"{page_number} 페이지 게시물 다운로드 중...")
-
-            article_no_list_len = len(article_no_list)
-
-            for idx, article_no in enumerate(article_no_list):
-                print(f"게시물 다운로드 중... {idx + 1} / {len(article_no_list)} ")
-                retries = 0
-                while True:
-                    try:
-                        crawler.download_artice(article_no)
+                save_progress(
+                    tgd_id, page_number, next, article_no_list, category_no_list
+                )
+                sleep(wait_seconds)
+                
+                if len(article_no_list) == 0 and not next:
+                    page_number = 1
+                    if len(category_no_list) > 0:
+                        category_no_list = category_no_list[1:]
+                    else:
                         break
-                    except Exception as ex:
-                        retries += 1
-                        if retries == 3:
-                            raise ex
-                        else:
-                            print(f"이지 목록 다운로드 실패: {ex}")
-                        pass
-                print("게시물 다운로드 완료")
 
-                save_progress(tgd_id, page_number, next, article_no_list[idx + 1 :])
+            else:
+                ####################################################################################################
+                # 게시글 다운로드 영역
+                print(
+                    f"카테고리 {category_no_list[0] if len(category_no_list) > 0 else 0} : {page_number} 페이지 게시물 다운로드 중..."
+                )
 
-                if idx + 1 < article_no_list_len:
+                for idx, article_no in enumerate(article_no_list):
+                    print(
+                        f"게시물 {article_no} 다운로드 중... ({idx+1}/{len(article_no_list)})"
+                    )
+                    retries = 0
+                    while True:
+                        try:
+                            crawler.download_artice(article_no, category_no_list[0])
+                            break
+                        except Exception as ex:
+                            retries += 1
+                            if retries == 3:
+                                raise ex
+                            else:
+                                print(f"이지 목록 다운로드 실패: {ex}")
+                            pass
+                    print("게시물 다운로드 완료")
+
+                    save_progress(
+                        tgd_id,
+                        page_number,
+                        next,
+                        article_no_list[idx + 1 :],
+                        category_no_list,
+                    )
                     sleep(wait_seconds)
+                article_no_list.clear()
 
-            print(f"{page_number} 페이지 게시물 다운로드 완료!")
+                print(
+                    f"카테고리 {category_no_list[0] if len(category_no_list) == 0 else 0} : {page_number} 페이지 게시물 다운로드 완료!"
+                )
 
-            page_number = page_number + 1
-            save_progress(tgd_id, page_number, next, None)
+                ####################################################################################################
+
+                page_number = page_number + 1
+                save_progress(tgd_id, page_number, next, None, category_no_list)
+
+                if not next:
+                    page_number = 1
+                    if len(category_no_list) > 0:
+                        category_no_list = category_no_list[1:]
+                    else:
+                        break
 
         del_progress()
         print("모든 게시물 다운로드 완료!")
