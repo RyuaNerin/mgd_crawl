@@ -236,6 +236,7 @@ class Crawler:
 
         soup = BeautifulSoup(self.driver.page_source, "html.parser")
 
+        article_count = 0
         row: Tag
         for row in soup.find_all("div", class_="article-list-row"):
             # 비밀글 제외
@@ -244,6 +245,12 @@ class Crawler:
 
             id = int(row["id"].replace("article-list-row-", ""))  # type: ignore
             article_list.append((id, "notice" in row["class"]))
+            article_count += 1
+
+        # 게시글이 하나도 없으면 저장하지 않고 스킵한다.
+        if article_count == 0:
+            self.close_driver()
+            return [], False
 
         self.save_html(soup, f"page_{page_number}.html", page_url)
 
