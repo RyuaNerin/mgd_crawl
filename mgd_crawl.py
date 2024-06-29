@@ -805,11 +805,7 @@ https://github.com/RyuaNerin/mgd_crawl
 
     with keep.running(), Crawler(tgd_id) as crawler:
         while True:
-            if (
-                len(article_no_list) == 0
-                or not category_no_list
-                or len(category_no_list) == 0
-            ):
+            if len(article_no_list) == 0 or not category_no_list:
                 print(
                     f"카테고리 {category_no_list[0] if category_no_list and len(category_no_list) >0 else 0} : {page_number} 페이지 목록 다운로드 중..."
                 )
