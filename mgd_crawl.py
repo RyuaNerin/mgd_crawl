@@ -162,7 +162,7 @@ class Crawler:
     def close_driver(self):
         if self.driver:
             try_except(lambda: self.driver.close())
-            try_except(lambda: self.driver.quit())
+            # try_except(lambda: self.driver.quit())
             self.driver = None  # type: ignore
 
     def get_cached_content(self, url: str) -> str | None:
@@ -196,33 +196,48 @@ class Crawler:
         print(url)
         self.driver.get(url)
 
-        first = True
-        retried = 0
+        try:
+            self.driver.find_element(By.ID, "main-menu")
+            return
+        except:  # noqa: E722
+            pass
 
+        waited = MAX_WAIT
+        retries = 0
         while True:
+            if waited >= MAX_WAIT:
+                print("reopen")
+                waited = 0
+                self.new_driver(False)
+                self.driver.get(url)
+
             try:
                 self.driver.find_element(By.ID, "main-menu")
                 return
             except:  # noqa: E722
                 pass
 
-            if first:
-                first = False
-                print("captcha 감지! 확인해주세요!")
+            if (
+                "Verify you are human by completing the action below."
+                in self.driver.page_source
+            ):
+                if retries == 0:
+                    waited = MAX_WAIT
+                    retries += 1
 
-                retried = MAX_WAIT
-            sleep(1)
+                    sleep(5)
+                else:
+                    if retries == 1:
+                        print("captcha 감지! 확인해주세요!")
+                        retries += 1
 
-            retried += 1
+                    sleep(1)
+
+            waited += 1
             try:
                 _ = self.driver.window_handles
             except:  # noqa: E722
-                retried = MAX_WAIT
-
-            if retried >= MAX_WAIT:
-                retried = 0
-                self.new_driver(False)
-                self.driver.get(url)
+                waited = MAX_WAIT
 
     def download_list(
         self, page_number: int, category: int
@@ -681,7 +696,7 @@ def save_progress(
         fs.flush()
 
 
-def load_progress(tgd_id: str) -> tuple[int, bool, list[int], list[int]] | None:
+def load_progress(tgd_id: str) -> tuple[int, bool, list[int], list[int] | None] | None:
     file = f"{tgd_id}.progress"
     if os.path.exists(file):
         with open(file, "r", encoding="utf-8") as fs:
@@ -693,7 +708,7 @@ def load_progress(tgd_id: str) -> tuple[int, bool, list[int], list[int]] | None:
                 categories = [int(x) for x in lines[-1][1:].split(",")]
             else:
                 page_numbers = [int(x) for x in lines[2:]]
-                categories = []
+                categories = None
 
             fs.flush()
             return page, next, page_numbers, categories
@@ -763,7 +778,7 @@ https://github.com/RyuaNerin/mgd_crawl
     except Exception:
         wait_seconds = MIN_WAIT_SECONDS
 
-    default: Tuple[int, bool, list[int], list[int]] = (1, True, [], [])
+    default: Tuple[int, bool, list[int], list[int] | None] = (1, True, [], None)
     (page_number, next, article_no_list, category_no_list) = default
 
     progress = load_progress(tgd_id)
@@ -790,9 +805,13 @@ https://github.com/RyuaNerin/mgd_crawl
 
     with keep.running(), Crawler(tgd_id) as crawler:
         while True:
-            if len(article_no_list) == 0 or len(category_no_list) == 0:
+            if (
+                len(article_no_list) == 0
+                or not category_no_list
+                or len(category_no_list) == 0
+            ):
                 print(
-                    f"카테고리 {category_no_list[0] if len(category_no_list) >0 else 0} : {page_number} 페이지 목록 다운로드 중..."
+                    f"카테고리 {category_no_list[0] if category_no_list and len(category_no_list) >0 else 0} : {page_number} 페이지 목록 다운로드 중..."
                 )
                 retries = 0
                 while True:
@@ -808,7 +827,7 @@ https://github.com/RyuaNerin/mgd_crawl
                             article_no_list = new_article_no_list
                             next = new_next
 
-                        if len(category_no_list) == 0:
+                        if not category_no_list:
                             category_no_list = categories_new
 
                         break
@@ -831,7 +850,7 @@ https://github.com/RyuaNerin/mgd_crawl
                     tgd_id, page_number, next, article_no_list, category_no_list
                 )
                 sleep(wait_seconds)
-                
+
                 if len(article_no_list) == 0 and not next:
                     page_number = 1
                     if len(category_no_list) > 0:
@@ -871,7 +890,7 @@ https://github.com/RyuaNerin/mgd_crawl
                         article_no_list[idx + 1 :],
                         category_no_list,
                     )
-                    sleep(wait_seconds)
+                    # sleep(wait_seconds)
                 article_no_list.clear()
 
                 print(
